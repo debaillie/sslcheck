@@ -1,0 +1,64 @@
+#!/bin/bash
+
+##CONSTANT VARIABLES
+failure=0
+
+##Test function
+function test(){
+  msg=$1
+  shift
+  $@ > /dev/null 2> /dev/null
+  if [ "$?" -eq "0" ]; then
+    echo -e "[ OK ] $msg"
+  else
+    echo -e "[FAIL] $msg"
+    failure=1
+  fi
+}
+
+hrmin=`date +'%H%M'`
+min=`date +'%M'`
+now=`date +'%s'`
+
+date
+
+sites=( "SITE1.com" )
+sites+=( "SITE2.net" "SITE3.org" "SITE4.biz" "SITE5.io" )
+
+files=()
+for site in ${sites[@]}; do
+  openssl s_client -showcerts -verify 5 -connect $site:443 2> /dev/null < /dev/null | awk '/BEGIN/,/END/{ if(/BEGIN/){a++}; out="cert"a".crt"; print >out}'
+  for cert in *.crt; do 
+    newname=$(openssl x509 -noout -subject -in $cert | sed -n 's/^.*CN=\(.*\)$/\1/; s/[ ,.*]/_/g; s/__/_/g; s/^_//g;p').pem
+    if [ ! -e $newname ]; then
+      mv $cert $newname
+      files+=( $newname )
+    else
+      rm $cert
+    fi
+  done
+done
+
+expired=0
+for file in ${files[@]}; do
+  expiration=$(date --date="$(cat $file | openssl x509 -noout -enddate | sed -e 's/notAfter=//')" +"%s")
+  
+  if [ "$expiration" -lt "$now" ]; then
+    echo "$file EXPIRED"
+    expired=$((expired+1))
+  else
+    expiration=$((expiration-604800)) #error if expires within 7 days
+    if [ "$expiration" -lt "$now" ]; then
+      echo "$file EXPIRING"
+      expired=$((expired+1))
+    fi
+  fi
+
+  rm $file
+done
+
+if [ "$expired" -eq "0" ]; then
+  test "SSL Certificates" curl https://nosnch.in/SNITCH
+else
+  test "SSL Certificates" /bin/false
+fi
